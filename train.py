@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import partial
 from typing import Dict
 
 import haiku as hk
@@ -10,6 +11,7 @@ import tensorflow.compat.v2 as tf
 import tensorflow_datasets as tfds
 
 from vqvae import VQVAEModel, Encoder, Decoder
+import dataloader
 
 
 @dataclass
@@ -67,7 +69,7 @@ class Trainer:
     def __init__(self):
         self.cfg = Config()
 
-    @jax.jit
+    @partial(jax.jit, static_argnums=(0,))
     def train_step(self, params, state, opt_state, data):
         def adapt_forward(params, state, data):
             # Pack model output and state together.
@@ -88,42 +90,46 @@ class Trainer:
         decoder = Decoder(self.cfg.num_hiddens, self.cfg.num_residual_layers, self.cfg.num_residual_hiddens)
         pre_vq_conv1 = hk.Conv2D(output_channels=self.cfg.embedding_dim, kernel_shape=(1, 1), stride=(1, 1), name="to_vq")
 
-        if vq_use_ema:
+        if self.cfg.vq_use_ema:
             vq_vae = hk.nets.VectorQuantizerEMA(
-                embedding_dim=embedding_dim,
-                num_embeddings=num_embeddings,
-                commitment_cost=commitment_cost,
-                decay=decay)
+                embedding_dim=self.cfg.embedding_dim,
+                num_embeddings=self.cfg.num_embeddings,
+                commitment_cost=self.cfg.commitment_cost,
+                decay=self.cfg.decay)
         else:
             vq_vae = hk.nets.VectorQuantizer(
-                embedding_dim=embedding_dim,
-                num_embeddings=num_embeddings,
-                commitment_cost=commitment_cost)
+                embedding_dim=self.cfg.embedding_dim,
+                num_embeddings=self.cfg.num_embeddings,
+                commitment_cost=self.cfg.commitment_cost)
 
         model = VQVAEModel(encoder, decoder, vq_vae, pre_vq_conv1,
-                        data_variance=train_data_variance)
+                        data_variance=self.train_data_variance)
 
         return model(data['image'], is_training)
 
     def train(self):
         # # Data Loading.
+        train_data_dict = dataloader.get_dataset(split='train')
         train_dataset = tfds.as_numpy(
             tf.data.Dataset.from_tensor_slices(train_data_dict)
             .map(cast_and_normalise_images)
             .shuffle(10000)
             .repeat(-1)  # repeat indefinitely
-            .batch(batch_size, drop_remainder=True)
+            .batch(self.cfg.batch_size, drop_remainder=True)
             .prefetch(-1))
+        self.train_data_variance = np.var(train_data_dict['image'] / 255.0)
+
+        valid_data_dict = dataloader.get_dataset(split='val')
         valid_dataset = tfds.as_numpy(
             tf.data.Dataset.from_tensor_slices(valid_data_dict)
             .map(cast_and_normalise_images)
             .repeat(1)  # 1 epoch
-            .batch(batch_size)
+            .batch(self.cfg.batch_size)
             .prefetch(-1))
 
         # Build modules.
         self.forward = hk.transform_with_state(self.forward)
-        self.optimizer = optax.adam(learning_rate)
+        self.optimizer = optax.adam(self.cfg.learning_rate)
 
         train_losses = []
         train_recon_errors = []
@@ -135,7 +141,7 @@ class Trainer:
         params, state = self.forward.init(rng, next(train_dataset_iter), is_training=True)
         opt_state = self.optimizer.init(params)
 
-        for step in range(1, num_training_updates + 1):
+        for step in range(1, self.cfg.num_training_updates + 1):
             data = next(train_dataset_iter)
             params, state, opt_state, train_results = (
                 self.train_step(params, state, opt_state, data))
@@ -147,7 +153,7 @@ class Trainer:
             train_vqvae_loss.append(train_results['vq_output']['loss'])
 
             if step % 100 == 0:
-                print(f'[Step {step}/{num_training_updates}] ' +
+                print(f'[Step {step}/{self.cfg.num_training_updates}] ' +
                     ('train loss: %f ' % np.mean(train_losses[-100:])) +
                     ('recon_error: %.3f ' % np.mean(train_recon_errors[-100:])) +
                     ('perplexity: %.3f ' % np.mean(train_perplexities[-100:])) +
