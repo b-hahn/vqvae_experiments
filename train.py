@@ -12,6 +12,7 @@ import tensorflow_datasets as tfds
 
 from vqvae import VQVAEModel, Encoder, Decoder
 import dataloader
+import visualization
 
 
 @dataclass
@@ -55,8 +56,9 @@ class Config:
 
     # This is only used for EMA updates.
     decay: float = 0.99
-
     learning_rate: float = 3e-4
+
+    save_path = "weights"
 
 
 def cast_and_normalise_images(data_dict: Dict):
@@ -158,6 +160,7 @@ class Trainer:
                     ('recon_error: %.3f ' % np.mean(train_recon_errors[-100:])) +
                     ('perplexity: %.3f ' % np.mean(train_perplexities[-100:])) +
                     ('vqvae loss: %.3f' % np.mean(train_vqvae_loss[-100:])))
+        jnp.save(self.cfg.save_path, params)
 
 
         train_batch = next(iter(train_dataset))
@@ -167,6 +170,8 @@ class Trainer:
         # using EMA the codebook is not updated.
         train_reconstructions = self.forward.apply(params, state, rng, train_batch, is_training=False)[0]['x_recon']
         valid_reconstructions = self.forward.apply(params, state, rng, valid_batch, is_training=False)[0]['x_recon']
+
+        visualization.visualize_reconstructions(train_batch, train_reconstructions, valid_batch, valid_reconstructions)
 
 if __name__=='__main__':
     trainer = Trainer()
