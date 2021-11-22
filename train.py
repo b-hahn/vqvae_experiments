@@ -109,7 +109,7 @@ class Trainer:
 
     def train(self):
         # # Data Loading.
-        train_data_dict = dataloader.get_dataset(split='train')
+        train_data_dict = dataloader.get_cifar_dataset(split='train')
         train_dataset = tfds.as_numpy(
             tf.data.Dataset.from_tensor_slices(train_data_dict)
             .map(cast_and_normalise_images)
@@ -119,7 +119,7 @@ class Trainer:
             .prefetch(-1))
         self.train_data_variance = np.var(train_data_dict['image'] / 255.0)
 
-        valid_data_dict = dataloader.get_dataset(split='val')
+        valid_data_dict = dataloader.get_cifar_dataset(split='val')
         valid_dataset = tfds.as_numpy(
             tf.data.Dataset.from_tensor_slices(valid_data_dict)
             .map(cast_and_normalise_images)
