@@ -1,5 +1,7 @@
 from dataclasses import dataclass
+import datetime
 from functools import partial
+from pathlib import Path
 from typing import Dict
 
 import haiku as hk
@@ -66,6 +68,11 @@ def cast_and_normalise_images(data_dict: Dict):
     data_dict['image'] = (tf.cast(data_dict['image'], tf.float32) / 255.0) - 0.5
     return data_dict
 
+def cast_and_normalise_images_swisstopo(data: jnp.ndarray):
+    """Convert images to floating point with the range [-0.5, 0.5]"""
+    data = (tf.cast(data, tf.float32) / 255.0) - 0.5
+    return data
+
 
 class Trainer:
     def __init__(self):
@@ -111,15 +118,18 @@ class Trainer:
         return model(data, is_training)
 
     def train(self):
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        run_dir = Path(f"run_{timestamp}")
+        run_dir.mkdir(exist_ok=True)
         # # Data Loading.
-        train_data_dict = dataloader.get_cifar_dataset(split='train')
-        train_dataset = tfds.as_numpy(
-            tf.data.Dataset.from_tensor_slices(train_data_dict)
-            .map(cast_and_normalise_images)
-            .shuffle(10000)
-            .repeat(-1)  # repeat indefinitely
-            .batch(self.cfg.batch_size, drop_remainder=True)
-            .prefetch(-1))
+        # train_data_dict = dataloader.get_cifar_dataset(split='train')
+        # train_dataset = tfds.as_numpy(
+        #     tf.data.Dataset.from_tensor_slices(train_data_dict)
+        #     .map(cast_and_normalise_images)
+        #     .shuffle(10000)
+        #     .repeat(-1)  # repeat indefinitely
+        #     .batch(self.cfg.batch_size, drop_remainder=True)
+        #     .prefetch(-1))
         # train_dataset = tfds.as_numpy(
         #     dataloader.get_swisstopo_dataset()
         #     .map(cast_and_normalise_images)
@@ -135,8 +145,10 @@ class Trainer:
         #     .batch(self.cfg.batch_size)
         #     .prefetch(-1))
         # self.train_data_variance = np.var(train_data_dict['image'] / 255.0)
-        train_dataset = dataloader.get_swisstopo_dataset(split='train').repeat(-1)
-        valid_dataset = dataloader.get_swisstopo_dataset(split='val').repeat(1)
+        train_dataset = dataloader.get_swisstopo_dataset(split='train', img_w=128,
+                                                         img_h=128).map(cast_and_normalise_images_swisstopo).repeat(-1)
+        valid_dataset = dataloader.get_swisstopo_dataset(split='val', img_w=128,
+                                                         img_h=128).map(cast_and_normalise_images_swisstopo).repeat(1)
         # TODO: compute actual variance
         self.train_data_variance = 0.01
 
@@ -179,18 +191,35 @@ class Trainer:
                     ('recon_error: %.3f ' % np.mean(train_recon_errors[-100:])) +
                     ('perplexity: %.3f ' % np.mean(train_perplexities[-100:])) +
                     ('vqvae loss: %.3f' % np.mean(train_vqvae_loss[-100:])))
+            if step % 500 == 0:
+                # Put data through the model with is_training=False, so that in the case of
+                # using EMA the codebook is not updated.
+                train_reconstructions = self.forward.apply(params, state, rng, data, is_training=False)[0]['x_recon']
+                valid_batch = jnp.asarray(next(iter(valid_dataset)))
+                valid_reconstructions = self.forward.apply(params, state, rng, valid_batch,
+                                                           is_training=False)[0]['x_recon']
+
+                visualization.visualize_reconstructions(data,
+                                                        train_reconstructions,
+                                                        valid_batch,
+                                                        valid_reconstructions,
+                                                        filename=f'{run_dir}/reconstructions_{step}.png')
         jnp.save(self.cfg.save_path, params)
 
-
-        train_batch = next(iter(train_dataset))
-        valid_batch = next(iter(valid_dataset))
+        train_batch = jnp.asarray(next(iter(train_dataset)))
+        valid_batch = jnp.asarray(next(iter(valid_dataset)))
 
         # Put data through the model with is_training=False, so that in the case of
         # using EMA the codebook is not updated.
         train_reconstructions = self.forward.apply(params, state, rng, train_batch, is_training=False)[0]['x_recon']
         valid_reconstructions = self.forward.apply(params, state, rng, valid_batch, is_training=False)[0]['x_recon']
 
-        visualization.visualize_reconstructions(train_batch, train_reconstructions, valid_batch, valid_reconstructions)
+        visualization.visualize_reconstructions(train_batch,
+                                                train_reconstructions,
+                                                valid_batch,
+                                                valid_reconstructions,
+                                                filename=f'{run_dir}/reconstructions_final.png')
+
 
 if __name__=='__main__':
     trainer = Trainer()

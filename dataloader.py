@@ -18,13 +18,14 @@ def get_cifar_dataset(split: str) -> jnp.ndarray:
             return jax.tree_map(lambda x: x[50000:], cifar10)
 
 
-def get_swisstopo_dataset(split: str) -> jnp.ndarray:
+def get_swisstopo_dataset(split: str, img_w: int, img_h: int) -> jnp.ndarray:
     # dataset = tf.data.Dataset.list_files("tiles/swiss-map-raster25_2015_1328_krel_1.25_2056/*.png")
     # dataset_it = dataset.as_numpy_iterator()
     # jax.tree_map(lambda x: f'{x.dtype.name}{list(x.shape)}', dataset_it)
     # return jax.tree_map(lambda x: x[:100], dataset_it)
-    data_dir = Path("/home/ben/vqvae_experiments/tiles/")
-    batch_size = 16
+    data_dir = Path("/home/ben/vqvae_experiments/tiles/xs/")
+    batch_size = 32
+
     if split == 'train':
         dataset = tf.keras.preprocessing.image_dataset_from_directory(
             data_dir,
@@ -32,7 +33,7 @@ def get_swisstopo_dataset(split: str) -> jnp.ndarray:
             subset="training",
             seed=123,
             labels=None,
-            image_size=(128, 128),
+            image_size=(img_w, img_h),
             batch_size=batch_size)
     elif split == 'val':
         dataset = tf.keras.preprocessing.image_dataset_from_directory(
@@ -41,7 +42,7 @@ def get_swisstopo_dataset(split: str) -> jnp.ndarray:
             subset="validation",
             seed=123,
             labels=None,
-            image_size=(128, 128),
+            image_size=(img_w, img_h),
             batch_size=batch_size)
 
     return dataset

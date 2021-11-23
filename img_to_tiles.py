@@ -16,7 +16,7 @@ with rasterio.open(fp) as img:
     img_w = img.width
     img_h = img.height
 
-    output_dir = Path('./tiles/') / fp.stem
+    output_dir = Path('./tiles/xs/') / fp.stem
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # split into tiles
