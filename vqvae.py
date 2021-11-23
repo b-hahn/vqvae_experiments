@@ -109,7 +109,7 @@ class Decoder(hk.Module):
 class VQVAEModel(hk.Module):
     def __init__(self, encoder, decoder, vqvae, pre_vq_conv1,
                  data_variance, name=None):
-        super(VQVAEModel, self).__init__(name=name)
+        super().__init__(name=name)
         self._encoder = encoder
         self._decoder = decoder
         self._vqvae = vqvae
@@ -129,3 +129,9 @@ class VQVAEModel(hk.Module):
             'recon_error': recon_error,
             'vq_output': vq_output,
         }
+
+    def sample(self, x):
+        # random_vector = jnp.random
+        # sample = self._decoder(vq_output['quantize'])
+        # return sample
+        return x
