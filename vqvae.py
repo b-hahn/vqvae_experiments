@@ -1,5 +1,6 @@
 import haiku as hk
 import jax
+from jax.interpreters.batching import batch, batch_subtrace
 import jax.numpy as jnp
 
 
@@ -130,8 +131,16 @@ class VQVAEModel(hk.Module):
             'vq_output': vq_output,
         }
 
-    def sample(self, x):
-        # random_vector = jnp.random
-        # sample = self._decoder(vq_output['quantize'])
-        # return sample
-        return x
+    def sample(self, key):
+        batch_size = 32
+        random_vector = jax.random.normal(key,
+                                          shape=(batch_size, 32, 32, self._vqvae.embedding_dim))
+                                        #   shape=(batch_size, self._vqvae.num_embeddings, self._vqvae.embedding_dim))
+        vq_output = self._vqvae(random_vector, is_training=False)
+        sample = self._decoder(vq_output['quantize'])
+        return sample
+
+    def get_code(self, input: jnp.ndarray):
+        z = self._pre_vq_conv1(self._encoder(input))
+        vq_output = self._vqvae(z, is_training=False)
+        return vq_output

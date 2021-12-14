@@ -1,6 +1,7 @@
 import datetime
 from functools import partial
 from pathlib import Path
+import pickle
 from typing import Dict
 
 import haiku as hk
@@ -68,51 +69,40 @@ class Trainer:
         model = VQVAEModel(encoder, decoder, vq_vae, pre_vq_conv1,
                         data_variance=self.train_data_variance)
 
-        # return model(data['image'], is_training)
-        return model(data, is_training)
+        return model(data['image'], is_training)
+        # return model(data, is_training)
+
+
 
     def train(self):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         run_dir = Path(f"run_{timestamp}")
         run_dir.mkdir(exist_ok=True)
         # # Data Loading.
-        # train_data_dict = dataloader.get_cifar_dataset(split='train')
-        # train_dataset = tfds.as_numpy(
-        #     tf.data.Dataset.from_tensor_slices(train_data_dict)
-        #     .map(cast_and_normalise_images)
-        #     .shuffle(10000)
-        #     .repeat(-1)  # repeat indefinitely
-        #     .batch(self.cfg.batch_size, drop_remainder=True)
-        #     .prefetch(-1))
-        # train_dataset = tfds.as_numpy(
-        #     dataloader.get_swisstopo_dataset()
-        #     .map(cast_and_normalise_images)
-        #     .shuffle(10000)
-        #     .repeat(-1)  # repeat indefinitely
-        #     .batch(self.cfg.batch_size, drop_remainder=True)
-        #     .prefetch(-1))
-        # valid_data_dict = dataloader.get_cifar_dataset(split='val')
-        # valid_dataset = tfds.as_numpy(
-        #     tf.data.Dataset.from_tensor_slices(valid_data_dict)
-        #     .map(cast_and_normalise_images)
-        #     .repeat(1)  # 1 epoch
-        #     .batch(self.cfg.batch_size)
-        #     .prefetch(-1))
-        # self.train_data_variance = np.var(train_data_dict['image'] / 255.0)
-        train_dataset = dataloader.get_swisstopo_dataset(split='train', img_w=128,
-                                                         img_h=128).map(cast_and_normalise_images_swisstopo).repeat(-1)
-        valid_dataset = dataloader.get_swisstopo_dataset(split='val', img_w=128,
-                                                         img_h=128).map(cast_and_normalise_images_swisstopo).repeat(1)
-        # TODO: compute actual variance
-        self.train_data_variance = 0.01
-
-        # valid_data_dict = dataloader.get_swisstopo_dataset((split='val')
-        # valid_dataset = tfds.as_numpy(
-        #     tf.data.Dataset.from_tensor_slices(valid_data_dict)
-        #     .map(cast_and_normalise_images)
-        #     .repeat(1)  # 1 epoch
-        #     .batch(self.cfg.batch_size)
-        #     .prefetch(-1))
+        if self.cfg.dataset == 'cifar':
+            train_data_dict = dataloader.get_cifar_dataset(split='train')
+            train_dataset = tfds.as_numpy(
+                tf.data.Dataset.from_tensor_slices(train_data_dict)
+                .map(cast_and_normalise_images)
+                .shuffle(10000)
+                .repeat(-1)  # repeat indefinitely
+                .batch(self.cfg.batch_size, drop_remainder=True)
+                .prefetch(-1))
+            valid_data_dict = dataloader.get_cifar_dataset(split='val')
+            valid_dataset = tfds.as_numpy(
+                tf.data.Dataset.from_tensor_slices(valid_data_dict)
+                .map(cast_and_normalise_images)
+                .repeat(1)  # 1 epoch
+                .batch(self.cfg.batch_size)
+                .prefetch(-1))
+            self.train_data_variance = np.var(train_data_dict['image'] / 255.0)
+        elif self.cfg.dataset == 'swisstopo':
+            train_dataset = dataloader.get_swisstopo_dataset(split='train', img_w=128,
+                                                            img_h=128).map(cast_and_normalise_images_swisstopo).repeat(-1)
+            valid_dataset = dataloader.get_swisstopo_dataset(split='val', img_w=128,
+                                                            img_h=128).map(cast_and_normalise_images_swisstopo).repeat(1)
+            # TODO: compute actual variance
+            self.train_data_variance = 0.01
 
         # Build modules.
         self.forward = hk.transform_with_state(self.forward)
@@ -125,13 +115,16 @@ class Trainer:
 
         rng = jax.random.PRNGKey(42)
         train_dataset_iter = iter(train_dataset)
-        params, state = self.forward.init(rng, jnp.asarray(next(train_dataset_iter)), is_training=True)
+        # params, state = self.forward.init(rng, jnp.asarray(next(train_dataset_iter)), is_training=True)
+        params, state = self.forward.init(rng, next(train_dataset_iter), is_training=True)
+
         opt_state = self.optimizer.init(params)
 
         for step in range(1, self.cfg.num_training_updates + 1):
-            data = jnp.asarray(next(train_dataset_iter))
+            # data = jnp.asarray(next(train_dataset_iter))
+            train_batch = next(train_dataset_iter)
             params, state, opt_state, train_results = (
-                self.train_step(params, state, opt_state, data))
+                self.train_step(params, state, opt_state, train_batch))
 
             train_results = jax.device_get(train_results)
             train_losses.append(train_results['loss'])
@@ -148,20 +141,27 @@ class Trainer:
             if step % 500 == 0:
                 # Put data through the model with is_training=False, so that in the case of
                 # using EMA the codebook is not updated.
-                train_reconstructions = self.forward.apply(params, state, rng, data, is_training=False)[0]['x_recon']
-                valid_batch = jnp.asarray(next(iter(valid_dataset)))
-                valid_reconstructions = self.forward.apply(params, state, rng, valid_batch,
-                                                           is_training=False)[0]['x_recon']
+                # train_reconstructions = self.forward.apply(params, state, rng, data, is_training=False)[0]['x_recon']
+                # valid_batch = jnp.asarray(next(iter(valid_dataset)))
+                # valid_reconstructions = self.forward.apply(params, state, rng, valid_batch,
+                #                                            is_training=False)[0]['x_recon']
+                train_reconstructions = self.forward.apply(params, state, rng, train_batch, is_training=False)[0]['x_recon']
+                # valid_reconstructions = self.forward.apply(params, state, rng, valid_batch, is_training=False)[0]['x_recon']
 
-                visualization.visualize_reconstructions(data,
+
+                visualization.visualize_reconstructions(train_batch,
                                                         train_reconstructions,
-                                                        valid_batch,
-                                                        valid_reconstructions,
+                                                        valid_batch=None,
+                                                        valid_reconstructions=None,
                                                         filename=f'{run_dir}/reconstructions_{step}.png')
-        jnp.save(self.cfg.save_path, params)
+            if step % 1000 == 0:
+                with open(run_dir / (self.cfg.save_path + f'_{step}.pkl'), 'wb') as f:
+                    pickle.dump(params, f)
 
-        train_batch = jnp.asarray(next(iter(train_dataset)))
-        valid_batch = jnp.asarray(next(iter(valid_dataset)))
+        train_batch = next(iter(train_dataset))
+        valid_batch = next(iter(valid_dataset))
+        # train_batch = jnp.asarray(next(iter(train_dataset)))
+        # valid_batch = jnp.asarray(next(iter(valid_dataset)))
 
         # Put data through the model with is_training=False, so that in the case of
         # using EMA the codebook is not updated.
