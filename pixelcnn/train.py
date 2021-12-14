@@ -152,11 +152,13 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
 
   train_summary_writer, eval_summary_writer = get_summary_writers(workdir)
   # Load dataset
-  data_source = input_pipeline.DataSource(config)
+  # data_source = input_pipeline.DataSource(config)
+  data_source = input_pipeline.DataSourceVQVAE(config)
   train_ds = data_source.train_ds
   eval_ds = data_source.eval_ds
-  steps_per_epoch = data_source.ds_info.splits[
-      'train'].num_examples // config.batch_size
+  steps_per_epoch = data_source.train_ds_len // config.batch_size
+  # steps_per_epoch = data_source.ds_info.splits[
+  #     'train'].num_examples // config.batch_size
   # Create dataset batch iterators
   train_iter = iter(train_ds)
   num_train_steps = train_ds.cardinality().numpy()
